@@ -74,6 +74,19 @@ Then just ask Claude:
 >
 > "Check my channel connection" → runs `get_channel_info`
 
+## Connect the Claude mobile app (claude.ai connectors)
+
+claude.ai custom connectors can't send custom headers, so the server also accepts the auth token as a query parameter:
+
+1. Open [claude.ai → Settings → Connectors](https://claude.ai/settings/connectors) (or in the mobile app: Settings → Connectors) → **Add custom connector**.
+2. As the URL, use:
+   ```
+   https://<your-service>.onrender.com/mcp?token=<MCP_AUTH_TOKEN>
+   ```
+3. Save, then enable the connector in a chat via the tools menu. It syncs to the mobile app automatically.
+
+Security note: the token sits in the connector URL, so treat that URL as a secret. Server-side it stays out of logs (query strings are stripped); use the Authorization-header form wherever the client supports it (Claude Code does).
+
 ## Claude Code skill
 
 The Telegram Post MCP server pairs with a skill at [`skills/telegram-post/SKILL.md`](skills/telegram-post/SKILL.md). While the server provides the *capability* (tools), the skill provides the *judgment*: a draft-first workflow (Claude always shows the post in chat and waits for approval before publishing), the channel's voice and tone profile, HTML formatting rules and their pitfalls, and recovery steps for cold starts and errors.
