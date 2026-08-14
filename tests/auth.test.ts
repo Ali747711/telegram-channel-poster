@@ -75,6 +75,34 @@ describe('requireBearerAuth', () => {
     expect(badRes.status).toBe(401);
   });
 
+  describe('query-parameter token (for clients that cannot set headers, e.g. claude.ai connectors)', () => {
+    it('accepts the correct token via ?token=', async () => {
+      const res = await request(buildProtectedApp()).post(`/protected?token=${TOKEN}`);
+
+      expect(res.status).toBe(200);
+    });
+
+    it('rejects a wrong query token', async () => {
+      const res = await request(buildProtectedApp()).post(`/protected?token=${'z'.repeat(TOKEN.length)}`);
+
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects an empty query token', async () => {
+      const res = await request(buildProtectedApp()).post('/protected?token=');
+
+      expect(res.status).toBe(401);
+    });
+
+    it('prefers a valid header even when a bogus query token is present', async () => {
+      const res = await request(buildProtectedApp())
+        .post('/protected?token=wrong')
+        .set('Authorization', `Bearer ${TOKEN}`);
+
+      expect(res.status).toBe(200);
+    });
+  });
+
   it('never echoes the presented token in the 401 response', async () => {
     const presented = 'attacker-supplied-token-value-123456';
 
