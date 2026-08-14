@@ -84,7 +84,7 @@ Install it by copying into your personal skills directory:
 cp -r skills/telegram-post ~/.claude/skills/
 ```
 
-New Claude Code sessions pick it up automatically. Note that the skill is personalized (channel name, voice, language) — edit its **Voice** section to match your own channel before using it.
+New Claude Code sessions pick it up automatically. The skill ships channel-agnostic: fill in its **Voice** section (language, persona, style) with your channel's identity before using it.
 
 ## Security notes
 

@@ -1,13 +1,13 @@
 ---
 name: telegram-post
-description: Use when Azamat asks to post, publish, announce, or draft content for his Telegram channel (@nabievshares, "Nabiev's blog"), asks for channel post ideas, or wants to check the channel connection — e.g. "post this to my channel", "write a post about X and publish it".
+description: Use when the user asks to post, publish, announce, or draft content for their Telegram channel, asks for channel post ideas, or wants to check the channel connection — e.g. "post this to my channel", "write a post about X and publish it".
 ---
 
 # Telegram Channel Posting
 
 ## Overview
 
-Publish to **@nabievshares** through the `telegram-poster` MCP server (this machine, user scope; deployed on Render). Claude writes the content; the server only delivers it (bot: @nabievblogerbot).
+Publish to the configured Telegram channel through the `telegram-poster` MCP server (see the repo README for setup). Claude writes the content; the server only delivers it via the channel's bot.
 
 ## Tools
 
@@ -21,7 +21,7 @@ Publish to **@nabievshares** through the `telegram-poster` MCP server (this mach
 | `mcp__telegram-poster__get_post` / `list_recent_posts` | Look up posts made through the server (IDs, content, edit/delete status). Best-effort: history resets when the free-tier server restarts. |
 | `mcp__telegram-poster__get_channel_info` | Diagnose connection and posting rights. |
 
-Tools missing? Check `claude mcp list` shows `telegram-poster` (registered at user scope).
+Tools missing? Check `claude mcp list` shows `telegram-poster`.
 
 ## Workflow
 
@@ -34,10 +34,12 @@ Tools missing? Check `claude mcp list` shows `telegram-poster` (registered at us
 
 **Cold starts:** the free Render tier sleeps after ~15 min idle; the first call may take 30–60s or time out. Retry once before diagnosing.
 
-## Voice (edit this section to retune)
+## Voice — CUSTOMIZE THIS SECTION for your channel
 
-- **Language:** match the language of the user's request; default English.
-- **Persona:** Azamat writing an open diary — first person, direct, warm, honest. Topics: tech news with his take, life experiences and lessons, and small pieces of everyday life written for his future self to look back on. (This warm, simple diary tone was explicitly approved on the intro post — keep it as the baseline.)
+> Replace the placeholders below with your channel's identity. Everything else in this skill is channel-agnostic.
+
+- **Language:** match the language of the user's request; default `<your channel's language>`.
+- **Persona:** `<who is writing, to whom, about what — e.g. "first-person developer diary: tech news with my take, life lessons, notes to my future self">`.
 - **Length:** ≤ ~900 chars unless long-form is requested.
 - **Structure:** bold hook as the first line → 1–3 short paragraphs (blank line between) → optional link/hashtags as the last line.
 - **Emoji:** 0–3, purposeful. **Hashtags:** ≤3, lowercase, only when genuinely useful.
