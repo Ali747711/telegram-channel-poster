@@ -118,6 +118,18 @@ describe('buildApp', () => {
       expect(res.body.result.tools).toHaveLength(3);
     });
 
+    it('rate-limits /mcp after 30 requests in a minute', async () => {
+      const shared = app();
+
+      let lastStatus = 0;
+      for (let i = 0; i < 31; i += 1) {
+        const res = await request(shared).post('/mcp').send({});
+        lastStatus = res.status;
+      }
+
+      expect(lastStatus).toBe(429);
+    });
+
     it('does not leak a session ID header in stateless mode', async () => {
       const res = await request(app()).post('/mcp').set(MCP_HEADERS).send(initializeBody);
 
