@@ -1,0 +1,256 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { createTelegramClient, TelegramApiError } from '../src/telegram/client.js';
+
+const BOT_TOKEN = '999999:FAKE-token-abcDEF123456';
+
+const jsonResponse = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  });
+
+const okResult = (result: unknown): Response => jsonResponse({ ok: true, result });
+
+const apiError = (
+  errorCode: number,
+  description: string,
+  parameters?: Record<string, unknown>
+): Response =>
+  jsonResponse({ ok: false, error_code: errorCode, description, parameters }, errorCode);
+
+interface Sent {
+  url: string;
+  body: Record<string, unknown>;
+}
+
+const buildClient = (responses: Response[] | Error) => {
+  const calls: Sent[] = [];
+  const fetchFn = vi.fn(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (responses instanceof Error) throw responses;
+    calls.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    const next = responses.shift();
+    if (!next) throw new Error('test: no more stubbed responses');
+    return next;
+  });
+  const sleepFn = vi.fn(async (_ms: number) => {});
+  const client = createTelegramClient({ botToken: BOT_TOKEN, fetchFn, sleepFn });
+  return { client, fetchFn, sleepFn, calls };
+};
+
+const sentMessage = (username?: string) =>
+  okResult({ message_id: 42, chat: { id: -100123, ...(username ? { username } : {}) } });
+
+describe('createTelegramClient', () => {
+  describe('sendMessage', () => {
+    it('POSTs to the sendMessage endpoint with the expected payload', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      await client.sendMessage({
+        chatId: '@mychan',
+        text: 'hello <b>world</b>',
+        parseMode: 'HTML',
+        disableLinkPreview: true,
+        silent: false
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        text: 'hello <b>world</b>',
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        disable_notification: false
+      });
+    });
+
+    it('returns the message ID and a t.me link for public channels', async () => {
+      const { client } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.sendMessage({ chatId: '@mychan', text: 'hi' });
+
+      expect(result).toEqual({ messageId: 42, link: 'https://t.me/mychan/42' });
+    });
+
+    it('returns no link for private channels (no username)', async () => {
+      const { client } = buildClient([sentMessage()]);
+
+      const result = await client.sendMessage({ chatId: -100123, text: 'hi' });
+
+      expect(result.messageId).toBe(42);
+      expect(result.link).toBeUndefined();
+    });
+
+    it('omits parse_mode entirely when not requested', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      await client.sendMessage({ chatId: '@mychan', text: 'plain' });
+
+      expect(calls[0]!.body).not.toHaveProperty('parse_mode');
+    });
+  });
+
+  describe('sendPhoto', () => {
+    it('POSTs photo URL and caption to the sendPhoto endpoint', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.sendPhoto({
+        chatId: '@mychan',
+        photoUrl: 'https://example.com/pic.jpg',
+        caption: 'nice pic',
+        parseMode: 'HTML'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        photo: 'https://example.com/pic.jpg',
+        caption: 'nice pic',
+        parse_mode: 'HTML',
+        disable_notification: false
+      });
+      expect(result).toEqual({ messageId: 42, link: 'https://t.me/mychan/42' });
+    });
+  });
+
+  describe('getChat', () => {
+    it('returns mapped chat info', async () => {
+      const { client, calls } = buildClient([
+        okResult({ id: -100999, title: 'My Channel', username: 'mychan', type: 'channel' })
+      ]);
+
+      const info = await client.getChat('@mychan');
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/getChat`);
+      expect(info).toEqual({ id: -100999, title: 'My Channel', username: 'mychan', type: 'channel' });
+    });
+  });
+
+  describe('getMe', () => {
+    it('returns the bot identity', async () => {
+      const { client, calls } = buildClient([
+        okResult({ id: 111, is_bot: true, first_name: 'bloger', username: 'mybot' })
+      ]);
+
+      const me = await client.getMe();
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+      expect(me).toEqual({ id: 111, username: 'mybot' });
+    });
+  });
+
+  describe('getChatMember', () => {
+    it('returns membership status and post permission', async () => {
+      const { client, calls } = buildClient([
+        okResult({ status: 'administrator', can_post_messages: true })
+      ]);
+
+      const member = await client.getChatMember(-100999, 111);
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/getChatMember`);
+      expect(calls[0]!.body).toEqual({ chat_id: -100999, user_id: 111 });
+      expect(member).toEqual({ status: 'administrator', canPostMessages: true });
+    });
+
+    it('omits canPostMessages when Telegram does not send it', async () => {
+      const { client } = buildClient([okResult({ status: 'member' })]);
+
+      const member = await client.getChatMember(-100999, 111);
+
+      expect(member.status).toBe('member');
+      expect(member.canPostMessages).toBeUndefined();
+    });
+  });
+
+  describe('error mapping', () => {
+    it('maps 401 to an actionable bot-token error', async () => {
+      const { client } = buildClient([apiError(401, 'Unauthorized')]);
+
+      await expect(client.getChat('@x')).rejects.toThrow(/bot token.*401|401.*bot token/i);
+    });
+
+    it('maps "chat not found" to a TELEGRAM_CHANNEL_ID hint', async () => {
+      const { client } = buildClient([apiError(400, 'Bad Request: chat not found')]);
+
+      await expect(client.sendMessage({ chatId: '@x', text: 'hi' })).rejects.toThrow(
+        /chat not found/i
+      );
+    });
+
+    it('maps 403 to an admin-permission hint', async () => {
+      const { client } = buildClient([apiError(403, 'Forbidden: bot is not a member')]);
+
+      await expect(client.sendMessage({ chatId: '@x', text: 'hi' })).rejects.toThrow(
+        /admin|permission/i
+      );
+    });
+
+    it('throws TelegramApiError instances carrying the error code', async () => {
+      const { client } = buildClient([apiError(401, 'Unauthorized')]);
+
+      const error = await client.getChat('@x').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(TelegramApiError);
+      expect((error as TelegramApiError).errorCode).toBe(401);
+    });
+
+    it('wraps network failures without leaking the bot token', async () => {
+      const { client } = buildClient(
+        new Error(`connect ETIMEDOUT https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`)
+      );
+
+      const error = await client.sendMessage({ chatId: '@x', text: 'hi' }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(TelegramApiError);
+      expect((error as Error).message).not.toContain(BOT_TOKEN);
+      expect((error as Error).message).toMatch(/unreachable/i);
+    });
+
+    it('handles non-JSON responses with a clear error', async () => {
+      const { client } = buildClient([
+        new Response('<html>Bad Gateway</html>', { status: 502 })
+      ]);
+
+      await expect(client.getChat('@x')).rejects.toThrow(/non-JSON|502/i);
+    });
+  });
+
+  describe('429 retry', () => {
+    it('waits retry_after seconds and retries once on 429', async () => {
+      const { client, fetchFn, sleepFn } = buildClient([
+        apiError(429, 'Too Many Requests', { retry_after: 3 }),
+        sentMessage('mychan')
+      ]);
+
+      const result = await client.sendMessage({ chatId: '@mychan', text: 'hi' });
+
+      expect(sleepFn).toHaveBeenCalledWith(3000);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      expect(result.messageId).toBe(42);
+    });
+
+    it('gives up after a second 429 with a clear rate-limit error', async () => {
+      const { client, fetchFn } = buildClient([
+        apiError(429, 'Too Many Requests', { retry_after: 1 }),
+        apiError(429, 'Too Many Requests', { retry_after: 60 })
+      ]);
+
+      await expect(client.sendMessage({ chatId: '@x', text: 'hi' })).rejects.toThrow(
+        /rate limit/i
+      );
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails fast without waiting when retry_after exceeds the in-request cap', async () => {
+      const { client, fetchFn, sleepFn } = buildClient([
+        apiError(429, 'Too Many Requests', { retry_after: 120 })
+      ]);
+
+      await expect(client.sendMessage({ chatId: '@x', text: 'hi' })).rejects.toThrow(
+        /rate limit|try again/i
+      );
+      expect(sleepFn).not.toHaveBeenCalled();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    });
+  });
+});
