@@ -8,6 +8,10 @@ A remote **MCP server** that lets Claude post to a Telegram channel. Claude writ
 |---|---|
 | `post_to_channel` | Publish a text post (HTML by default). Splits >4096 chars into sequential posts, falls back to plain text if formatting fails to parse, returns message IDs + public link. |
 | `post_photo` | Publish a photo by public URL with an optional caption (≤1024 chars). |
+| `post_video` | Publish a video by public URL (MP4 recommended, ≤20MB) with an optional caption. |
+| `edit_post` | Replace a post's text by message ID; automatically edits the caption instead for photo/video posts. |
+| `delete_post` | Permanently delete a post by message ID. Gated behind `confirm: true`. |
+| `get_post` / `list_recent_posts` | Details of posts made through this server (content, link, edit/delete status). In-memory: history resets on server restart. |
 | `get_channel_info` | Report channel title/ID/type and whether the bot has posting rights — use to debug the connection. |
 
 ## Prerequisites
