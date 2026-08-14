@@ -22,4 +22,5 @@ npm-debug.log*
 .vscode/
 .claude
 .agents
-docsskills-lock.json
+docs
+skills-lock.json
