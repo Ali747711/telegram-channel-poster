@@ -1,6 +1,8 @@
-# telegram-channel-poster
+# Telegram Post MCP Server
 
 A remote **MCP server** that lets Claude post to a Telegram channel. Claude writes the content in conversation and calls this server's tools; the server holds the bot credentials and delivers the posts via the Telegram Bot API. No LLM calls happen server-side.
+
+It ships with a companion **Claude Code skill** ([`skills/telegram-post/SKILL.md`](skills/telegram-post/SKILL.md)) that teaches Claude the posting workflow and the channel's voice — see [Claude Code skill](#claude-code-skill) below.
 
 ## Tools
 
@@ -71,6 +73,18 @@ Then just ask Claude:
 > "Write a short post about X and publish it to my channel"
 >
 > "Check my channel connection" → runs `get_channel_info`
+
+## Claude Code skill
+
+The Telegram Post MCP server pairs with a skill at [`skills/telegram-post/SKILL.md`](skills/telegram-post/SKILL.md). While the server provides the *capability* (tools), the skill provides the *judgment*: a draft-first workflow (Claude always shows the post in chat and waits for approval before publishing), the channel's voice and tone profile, HTML formatting rules and their pitfalls, and recovery steps for cold starts and errors.
+
+Install it by copying into your personal skills directory:
+
+```bash
+cp -r skills/telegram-post ~/.claude/skills/
+```
+
+New Claude Code sessions pick it up automatically. Note that the skill is personalized (channel name, voice, language) — edit its **Voice** section to match your own channel before using it.
 
 ## Security notes
 
