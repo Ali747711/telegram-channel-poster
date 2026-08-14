@@ -77,6 +77,12 @@ export function registerPostToChannel(server: McpServer, deps: ToolDeps): void {
             activeParseMode
           );
           posted.push(sent);
+          deps.registry.record({
+            messageId: sent.messageId,
+            kind: 'text',
+            content: chunk,
+            link: sent.link
+          });
           if (fellBack) {
             usedFallback = true;
             activeParseMode = undefined;

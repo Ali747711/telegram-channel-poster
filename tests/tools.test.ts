@@ -18,6 +18,10 @@ interface FakeTelegram {
   client: TelegramClient;
   sendMessage: ReturnType<typeof vi.fn>;
   sendPhoto: ReturnType<typeof vi.fn>;
+  sendVideo: ReturnType<typeof vi.fn>;
+  editMessageText: ReturnType<typeof vi.fn>;
+  editMessageCaption: ReturnType<typeof vi.fn>;
+  deleteMessage: ReturnType<typeof vi.fn>;
   getChat: ReturnType<typeof vi.fn>;
   getMe: ReturnType<typeof vi.fn>;
   getChatMember: ReturnType<typeof vi.fn>;
@@ -30,6 +34,10 @@ const fakeTelegram = (): FakeTelegram => {
     return { messageId: nextId, link: `https://t.me/testchannel/${nextId}` };
   });
   const sendPhoto = vi.fn(async () => ({ messageId: 55, link: 'https://t.me/testchannel/55' }));
+  const sendVideo = vi.fn(async () => ({ messageId: 66, link: 'https://t.me/testchannel/66' }));
+  const editMessageText = vi.fn(async () => ({ messageId: 42, link: 'https://t.me/testchannel/42' }));
+  const editMessageCaption = vi.fn(async () => ({ messageId: 42, link: 'https://t.me/testchannel/42' }));
+  const deleteMessage = vi.fn(async () => true);
   const getChat = vi.fn(async () => ({
     id: -100999,
     title: "Nabiev's blog",
@@ -38,14 +46,18 @@ const fakeTelegram = (): FakeTelegram => {
   }));
   const getMe = vi.fn(async () => ({ id: 111, username: 'testbot' }));
   const getChatMember = vi.fn(async () => ({ status: 'administrator', canPostMessages: true }));
-  return {
-    client: { sendMessage, sendPhoto, getChat, getMe, getChatMember } as unknown as TelegramClient,
+  const mocks = {
     sendMessage,
     sendPhoto,
+    sendVideo,
+    editMessageText,
+    editMessageCaption,
+    deleteMessage,
     getChat,
     getMe,
     getChatMember
   };
+  return { client: mocks as unknown as TelegramClient, ...mocks };
 };
 
 const appWith = (telegram: TelegramClient) =>
@@ -56,14 +68,21 @@ const appWith = (telegram: TelegramClient) =>
     channelId: CHANNEL_ID
   });
 
-const callTool = (telegram: TelegramClient, name: string, args: Record<string, unknown>) =>
-  request(appWith(telegram))
+const callToolOn = (
+  app: ReturnType<typeof appWith>,
+  name: string,
+  args: Record<string, unknown>
+) =>
+  request(app)
     .post('/mcp')
     .set(MCP_HEADERS)
     .send({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name, arguments: args } });
 
+const callTool = (telegram: TelegramClient, name: string, args: Record<string, unknown>) =>
+  callToolOn(appWith(telegram), name, args);
+
 describe('MCP tools', () => {
-  it('lists exactly the three Phase 4 tools with schemas', async () => {
+  it('lists all eight tools with schemas', async () => {
     const res = await request(appWith(fakeTelegram().client))
       .post('/mcp')
       .set(MCP_HEADERS)
@@ -72,9 +91,14 @@ describe('MCP tools', () => {
     expect(res.status).toBe(200);
     const tools = res.body.result.tools as Array<{ name: string; description?: string; inputSchema?: unknown }>;
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'delete_post',
+      'edit_post',
       'get_channel_info',
+      'get_post',
+      'list_recent_posts',
       'post_photo',
-      'post_to_channel'
+      'post_to_channel',
+      'post_video'
     ]);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
@@ -228,6 +252,152 @@ describe('MCP tools', () => {
       const rejected = res.body.error !== undefined || res.body.result?.isError === true;
       expect(rejected).toBe(true);
       expect(fake.sendPhoto).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('edit_post', () => {
+    it('edits a text post and reports the link', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'edit_post', { message_id: 42, text: 'updated <b>text</b>' });
+
+      expect(res.body.result.isError).toBeFalsy();
+      expect(fake.editMessageText).toHaveBeenCalledWith({
+        chatId: CHANNEL_ID,
+        messageId: 42,
+        text: 'updated <b>text</b>',
+        parseMode: 'HTML'
+      });
+      expect(res.body.result.content[0].text).toContain('https://t.me/testchannel/42');
+    });
+
+    it('falls back to a caption edit when the post is a media message', async () => {
+      const fake = fakeTelegram();
+      fake.editMessageText.mockRejectedValueOnce(
+        new TelegramApiError(
+          'Telegram API editMessageText failed (400): Bad Request: there is no text in the message to edit',
+          { errorCode: 400 }
+        )
+      );
+
+      const res = await callTool(fake.client, 'edit_post', { message_id: 42, text: 'new caption' });
+
+      expect(fake.editMessageCaption).toHaveBeenCalledWith({
+        chatId: CHANNEL_ID,
+        messageId: 42,
+        caption: 'new caption',
+        parseMode: 'HTML'
+      });
+      expect(res.body.result.isError).toBeFalsy();
+      expect(res.body.result.content[0].text).toMatch(/caption/i);
+    });
+
+    it('surfaces an actionable error when the message does not exist', async () => {
+      const fake = fakeTelegram();
+      fake.editMessageText.mockRejectedValue(
+        new TelegramApiError(
+          'Telegram API editMessageText failed (400): Bad Request: message to edit not found',
+          { errorCode: 400 }
+        )
+      );
+
+      const res = await callTool(fake.client, 'edit_post', { message_id: 9999, text: 'nope' });
+
+      expect(res.body.result.isError).toBe(true);
+      expect(res.body.result.content[0].text).toMatch(/not found/i);
+    });
+  });
+
+  describe('delete_post', () => {
+    it('refuses to delete without confirm: true and never calls Telegram', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'delete_post', { message_id: 42, confirm: false });
+
+      expect(res.body.result.isError).toBe(true);
+      expect(res.body.result.content[0].text).toMatch(/confirm/i);
+      expect(fake.deleteMessage).not.toHaveBeenCalled();
+    });
+
+    it('deletes the message when confirmed', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'delete_post', { message_id: 42, confirm: true });
+
+      expect(res.body.result.isError).toBeFalsy();
+      expect(fake.deleteMessage).toHaveBeenCalledWith(CHANNEL_ID, 42);
+      expect(res.body.result.content[0].text).toMatch(/deleted/i);
+    });
+  });
+
+  describe('post_video', () => {
+    it('posts a video by URL and reports the link', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'post_video', {
+        video_url: 'https://example.com/clip.mp4',
+        caption: 'watch'
+      });
+
+      expect(res.body.result.isError).toBeFalsy();
+      expect(fake.sendVideo).toHaveBeenCalledWith({
+        chatId: CHANNEL_ID,
+        videoUrl: 'https://example.com/clip.mp4',
+        caption: 'watch',
+        parseMode: 'HTML',
+        silent: false
+      });
+      expect(res.body.result.content[0].text).toContain('https://t.me/testchannel/66');
+    });
+
+    it('rejects a non-http(s) video URL at the schema boundary', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'post_video', { video_url: 'file:///tmp/x.mp4' });
+
+      const rejected = res.body.error !== undefined || res.body.result?.isError === true;
+      expect(rejected).toBe(true);
+      expect(fake.sendVideo).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('post registry (get_post / list_recent_posts)', () => {
+    it('tracks a published post and returns its details', async () => {
+      const fake = fakeTelegram();
+      const app = appWith(fake.client);
+
+      await callToolOn(app, 'post_to_channel', { text: 'diary entry one' });
+      const res = await callToolOn(app, 'get_post', { message_id: 101 });
+
+      expect(res.body.result.isError).toBeFalsy();
+      const text = res.body.result.content[0].text as string;
+      expect(text).toContain('diary entry one');
+      expect(text).toContain('101');
+    });
+
+    it('says so when a post is not tracked', async () => {
+      const fake = fakeTelegram();
+
+      const res = await callTool(fake.client, 'get_post', { message_id: 12345 });
+
+      expect(res.body.result.content[0].text).toMatch(/no record/i);
+    });
+
+    it('lists recent posts newest first and reflects edits and deletes', async () => {
+      const fake = fakeTelegram();
+      const app = appWith(fake.client);
+
+      await callToolOn(app, 'post_to_channel', { text: 'first entry' });
+      await callToolOn(app, 'post_to_channel', { text: 'second entry' });
+      await callToolOn(app, 'edit_post', { message_id: 101, text: 'first entry (edited)' });
+      await callToolOn(app, 'delete_post', { message_id: 102, confirm: true });
+
+      const res = await callToolOn(app, 'list_recent_posts', {});
+
+      const text = res.body.result.content[0].text as string;
+      expect(text.indexOf('102')).toBeLessThan(text.indexOf('101'));
+      expect(text).toMatch(/edited/i);
+      expect(text).toMatch(/deleted/i);
     });
   });
 

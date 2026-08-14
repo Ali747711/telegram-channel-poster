@@ -2,6 +2,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express, { type Express, type Request, type Response } from 'express';
 
 import { requireBearerAuth } from './auth.js';
+import { createPostRegistry } from './post-registry.js';
 import { rateLimit } from './rate-limit.js';
 import { requestLogger } from './request-logger.js';
 import { buildMcpServer } from './server.js';
@@ -46,8 +47,12 @@ export function buildApp({ mcpAuthToken, logger, telegram, channelId }: AppDeps)
   const limiter = rateLimit({ windowMs: RATE_LIMIT_WINDOW_MS, max: RATE_LIMIT_MAX_REQUESTS });
   app.use('/mcp', requestLogger(logger), limiter);
 
+  // Shared across requests: the MCP server is per-request (stateless transport),
+  // but posted-message history must survive between calls.
+  const registry = createPostRegistry();
+
   app.post('/mcp', auth, express.json({ limit: JSON_BODY_LIMIT }), async (req, res) => {
-    const server = buildMcpServer({ telegram, channelId, logger });
+    const server = buildMcpServer({ telegram, channelId, logger, registry });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true

@@ -162,6 +162,86 @@ describe('createTelegramClient', () => {
     });
   });
 
+  describe('editMessageText', () => {
+    it('edits a text post and returns the updated message reference', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.editMessageText({
+        chatId: '@mychan',
+        messageId: 42,
+        text: 'updated <b>text</b>',
+        parseMode: 'HTML'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        message_id: 42,
+        text: 'updated <b>text</b>',
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true }
+      });
+      expect(result).toEqual({ messageId: 42, link: 'https://t.me/mychan/42' });
+    });
+  });
+
+  describe('editMessageCaption', () => {
+    it('edits a media caption', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      await client.editMessageCaption({
+        chatId: '@mychan',
+        messageId: 42,
+        caption: 'new caption',
+        parseMode: 'HTML'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageCaption`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        message_id: 42,
+        caption: 'new caption',
+        parse_mode: 'HTML'
+      });
+    });
+  });
+
+  describe('deleteMessage', () => {
+    it('deletes a message and returns true', async () => {
+      const { client, calls } = buildClient([okResult(true)]);
+
+      const result = await client.deleteMessage('@mychan', 42);
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`);
+      expect(calls[0]!.body).toEqual({ chat_id: '@mychan', message_id: 42 });
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('sendVideo', () => {
+    it('posts a video by URL with caption and streaming enabled', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.sendVideo({
+        chatId: '@mychan',
+        videoUrl: 'https://example.com/clip.mp4',
+        caption: 'watch this',
+        parseMode: 'HTML'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        video: 'https://example.com/clip.mp4',
+        caption: 'watch this',
+        parse_mode: 'HTML',
+        disable_notification: false,
+        supports_streaming: true
+      });
+      expect(result).toEqual({ messageId: 42, link: 'https://t.me/mychan/42' });
+    });
+  });
+
   describe('error mapping', () => {
     it('maps 401 to an actionable bot-token error', async () => {
       const { client } = buildClient([apiError(401, 'Unauthorized')]);

@@ -33,6 +33,29 @@ export interface ChatInfo {
   readonly type: string;
 }
 
+export interface EditTextParams {
+  readonly chatId: string | number;
+  readonly messageId: number;
+  readonly text: string;
+  readonly parseMode?: ParseMode;
+  readonly disableLinkPreview?: boolean;
+}
+
+export interface EditCaptionParams {
+  readonly chatId: string | number;
+  readonly messageId: number;
+  readonly caption: string;
+  readonly parseMode?: ParseMode;
+}
+
+export interface SendVideoParams {
+  readonly chatId: string | number;
+  readonly videoUrl: string;
+  readonly caption?: string;
+  readonly parseMode?: ParseMode;
+  readonly silent?: boolean;
+}
+
 export interface BotInfo {
   readonly id: number;
   readonly username: string;
@@ -49,6 +72,10 @@ export interface TelegramClient {
   readonly getChat: (chatId: string | number) => Promise<ChatInfo>;
   readonly getMe: () => Promise<BotInfo>;
   readonly getChatMember: (chatId: string | number, userId: number) => Promise<ChatMemberInfo>;
+  readonly editMessageText: (params: EditTextParams) => Promise<SentMessage>;
+  readonly editMessageCaption: (params: EditCaptionParams) => Promise<SentMessage>;
+  readonly deleteMessage: (chatId: string | number, messageId: number) => Promise<boolean>;
+  readonly sendVideo: (params: SendVideoParams) => Promise<SentMessage>;
 }
 
 export interface TelegramClientOptions {
@@ -251,6 +278,43 @@ export function createTelegramClient(options: TelegramClientOptions): TelegramCl
     getMe: async (): Promise<BotInfo> => {
       const raw = (await call('getMe', {})) as { id: number; username: string };
       return { id: raw.id, username: raw.username };
+    },
+
+    editMessageText: async (params: EditTextParams): Promise<SentMessage> => {
+      const raw = (await call('editMessageText', {
+        chat_id: params.chatId,
+        message_id: params.messageId,
+        text: params.text,
+        ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {}),
+        link_preview_options: { is_disabled: params.disableLinkPreview ?? true }
+      })) as RawMessage;
+      return toSentMessage(raw);
+    },
+
+    editMessageCaption: async (params: EditCaptionParams): Promise<SentMessage> => {
+      const raw = (await call('editMessageCaption', {
+        chat_id: params.chatId,
+        message_id: params.messageId,
+        caption: params.caption,
+        ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {})
+      })) as RawMessage;
+      return toSentMessage(raw);
+    },
+
+    deleteMessage: async (chatId: string | number, messageId: number): Promise<boolean> => {
+      return (await call('deleteMessage', { chat_id: chatId, message_id: messageId })) === true;
+    },
+
+    sendVideo: async (params: SendVideoParams): Promise<SentMessage> => {
+      const raw = (await call('sendVideo', {
+        chat_id: params.chatId,
+        video: params.videoUrl,
+        ...(params.caption !== undefined ? { caption: params.caption } : {}),
+        ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {}),
+        disable_notification: params.silent ?? false,
+        supports_streaming: true
+      })) as RawMessage;
+      return toSentMessage(raw);
     },
 
     getChatMember: async (chatId: string | number, userId: number): Promise<ChatMemberInfo> => {

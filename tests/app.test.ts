@@ -115,7 +115,7 @@ describe('buildApp', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(2);
-      expect(res.body.result.tools).toHaveLength(3);
+      expect(res.body.result.tools).toHaveLength(8);
     });
 
     it('rate-limits /mcp after 30 requests in a minute', async () => {
