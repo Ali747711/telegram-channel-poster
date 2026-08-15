@@ -47,8 +47,23 @@ Tools missing? Check `claude mcp list` shows `telegram-poster`.
 
 ## Formatting rules
 
-- HTML tags only: `<b>`, `<i>`, `<a href="...">`, `<code>`. **Never Markdown** — `*asterisks*` and `[brackets]()` post as literal characters.
+The server posts via the Bot API in **HTML parse mode**. The Markdown shortcuts from the Telegram app UI (`**bold**`, `_italic_`, `__underline__`, `~~strike~~`, `||spoiler||`) do **not** work here — they post as literal characters. Always use HTML tags:
+
+| Effect | HTML | Good for |
+|---|---|---|
+| Bold | `<b>text</b>` | the hook line, key points, deadlines |
+| Italic | `<i>text</i>` | tone, asides, quoted thoughts |
+| Underline | `<u>text</u>` | critical terms (use sparingly) |
+| Strikethrough | `<s>text</s>` | corrections, changed plans, ~~old~~ new prices |
+| Spoiler | `<tg-spoiler>text</tg-spoiler>` | punchlines, trivia answers, reveals on tap |
+| Inline code | `<code>text</code>` | commands, identifiers, formulas |
+| Code block | `<pre>text</pre>` | multi-line snippets — preserves spacing and copies cleanly; `<pre><code class="language-ts">…</code></pre>` adds a language hint |
+| Quote | `<blockquote>text</blockquote>` | quoting someone or excerpting; `<blockquote expandable>` collapses long quotes behind a tap |
+| Link | `<a href="https://…">anchor</a>` | always natural anchor text |
+
 - **Never show a raw URL as visible text.** Wrap every link in `<a href="...">` with natural anchor text that reads as part of the sentence — `<a href="https://github.com/user/repo">The code is on GitHub</a>`, never `Code → <a href="...">github.com/user/repo</a>` and never a bare `https://...` in the body.
+- **Escape literal characters:** a bare `<`, `>` or `&` in post text breaks HTML parsing (the classic "can't parse entities" error) — write `&lt;`, `&gt;`, `&amp;`.
+- Tags nest fine (`<blockquote><b>…</b></blockquote>`). Telegram has no custom fonts — don't fake them with unicode "font" generators; they break search and screen readers.
 - Don't use MarkdownV2 (requires escaping 18 special characters; fails easily).
 - If HTML fails to parse, the server auto-retries as plain text and says so in the result — fix the tags and repost only if formatting mattered.
 
@@ -68,7 +83,8 @@ Next: automating the whole content pipeline.
 
 | Mistake | Fix |
 |---|---|
-| Markdown asterisks in post text | HTML tags only |
+| App-style Markdown (`**bold**`, `||spoiler||`) in post text | HTML tags only — app shortcuts don't work via the Bot API |
+| Literal `<`, `>` or `&` breaking the HTML parse | Escape as `&lt;` `&gt;` `&amp;` |
 | Publishing without showing a draft first | Always draft in chat and wait for a go-ahead — "post it" is not one |
 | Giving up after first timeout | Cold start — retry once |
 | Caption >1024 chars | Shorten it or post text separately |
