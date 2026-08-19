@@ -24,3 +24,10 @@ npm-debug.log*
 .agents
 docs
 skills-lock.json
+
+# Personal media & local image-generation scripts (never commit — image2.sh holds an API key)
+image.sh
+image2.sh
+IMG_*.jpg
+*.png
+*.webp
