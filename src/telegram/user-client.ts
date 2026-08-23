@@ -58,9 +58,19 @@ export interface UserClientOptions {
 }
 
 const CONNECTION_RETRIES = 3;
+/** How many recent dialogs to scan when resolving a folder's members. */
+const FOLDER_SCAN_LIMIT = 500;
 
 const toIsoDate = (seconds: number | undefined): string =>
   new Date((seconds ?? 0) * 1000).toISOString();
+
+/**
+ * Telegram reports the same chat with different id shapes: dialogs use the
+ * "-100…" channel form, folder include_peers carry the bare id. Compare on a
+ * normalized form so folder filtering actually matches.
+ */
+export const normalizePeerId = (id: string | number): string =>
+  String(id).replace(/^-100/, '').replace(/^-/, '');
 
 /** Folder titles are plain strings on old layers, TextWithEntities on new ones. */
 const folderTitle = (title: unknown): string => {
@@ -152,13 +162,19 @@ export function createUserClient(options: UserClientOptions): TelegramUserClient
 
     listDialogs: async ({ limit, folderId }): Promise<readonly UserChat[]> => {
       await ensureConnected();
-      const dialogs = await client.getDialogs({ limit });
-
       const allowedIds =
         folderId === undefined ? undefined : new Set(await folderPeerIds(client, folderId));
 
+      // getDialogs returns the most RECENT n dialogs. A folder's chats can be
+      // far down that list, so scan a wide window when filtering by folder and
+      // apply the caller's limit afterwards.
+      const dialogs = await client.getDialogs({
+        limit: allowedIds === undefined ? limit : FOLDER_SCAN_LIMIT
+      });
+
       return dialogs
-        .filter((dialog) => allowedIds === undefined || allowedIds.has(String(dialog.id)))
+        .filter((dialog) => allowedIds === undefined || allowedIds.has(normalizePeerId(String(dialog.id))))
+        .slice(0, limit)
         .map((dialog) => ({
           id: String(dialog.id),
           title: dialog.title ?? dialog.name ?? 'untitled',
@@ -267,6 +283,6 @@ async function folderPeerIds(client: GramClient, folderId: number): Promise<read
 
   return (filter?.includePeers ?? []).map((peer) => {
     const entry = peer as { userId?: unknown; chatId?: unknown; channelId?: unknown };
-    return String(entry.channelId ?? entry.chatId ?? entry.userId ?? '');
+    return normalizePeerId(String(entry.channelId ?? entry.chatId ?? entry.userId ?? ''));
   });
 }
