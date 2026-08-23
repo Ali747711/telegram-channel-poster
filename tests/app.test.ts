@@ -30,7 +30,8 @@ const app = () => {
     registry: createPostRegistry(kv),
     schedule: createScheduleStore(kv),
     files: createFileStore(),
-    persistent: false
+    persistent: false,
+    kv
   });
 };
 

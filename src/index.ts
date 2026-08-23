@@ -9,6 +9,7 @@ import { startScheduler } from './scheduler.js';
 import { createMemoryKv } from './storage/kv.js';
 import { createUpstashKv } from './storage/upstash.js';
 import { createTelegramClient } from './telegram/client.js';
+import { createUserClient } from './telegram/user-client.js';
 import { createLogger } from './utils/logger.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -37,6 +38,9 @@ function main(): void {
   const files = createFileStore();
   logger.info('storage initialized', { mode: persistent ? 'upstash-redis' : 'in-memory' });
 
+  const userClient = config.userApi === undefined ? undefined : createUserClient(config.userApi);
+  logger.info('user account tools', { enabled: userClient !== undefined });
+
   const app = buildApp({
     mcpAuthToken: config.mcpAuthToken,
     logger,
@@ -45,7 +49,9 @@ function main(): void {
     registry,
     schedule,
     files,
-    persistent
+    persistent,
+    kv,
+    userClient
   });
 
   const scheduler = startScheduler({ schedule, registry, telegram, channelId: config.channelId, logger });
@@ -58,6 +64,7 @@ function main(): void {
   const shutdown = (signal: string): void => {
     logger.info('shutting down', { signal });
     scheduler.stop();
+    void userClient?.disconnect();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), SHUTDOWN_GRACE_MS).unref();
   };

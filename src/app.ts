@@ -10,7 +10,10 @@ import { rateLimit } from './rate-limit.js';
 import { requestLogger } from './request-logger.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { buildMcpServer } from './server.js';
+import type { Kv } from './storage/kv.js';
 import type { TelegramClient } from './telegram/client.js';
+import { createDmGuard } from './telegram/dm-guard.js';
+import type { TelegramUserClient } from './telegram/user-client.js';
 import type { Logger } from './utils/logger.js';
 
 export interface AppDeps {
@@ -22,6 +25,9 @@ export interface AppDeps {
   readonly schedule: ScheduleStore;
   readonly files: FileStore;
   readonly persistent: boolean;
+  readonly kv: Kv;
+  /** Present only when a personal Telegram session is configured. */
+  readonly userClient?: TelegramUserClient;
 }
 
 const JSON_BODY_LIMIT = '1mb';
@@ -48,7 +54,9 @@ const safeFilename = (header: unknown): string => {
  * tools can reference by file_id).
  */
 export function buildApp(deps: AppDeps): Express {
-  const { mcpAuthToken, logger, telegram, channelId, registry, schedule, files, persistent } = deps;
+  const { mcpAuthToken, logger, telegram, channelId, registry, schedule, files, persistent, kv, userClient } =
+    deps;
+  const dmGuard = createDmGuard(kv);
   const app = express();
   app.disable('x-powered-by');
   // Render terminates TLS at its proxy; trust the first hop so req.ip is the real client.
@@ -63,7 +71,10 @@ export function buildApp(deps: AppDeps): Express {
   app.use(['/mcp', '/upload'], requestLogger(logger), limiter);
 
   app.post('/mcp', auth, express.json({ limit: JSON_BODY_LIMIT }), async (req, res) => {
-    const server = buildMcpServer({ telegram, channelId, logger, registry, schedule, files, persistent });
+    const baseDeps = { telegram, channelId, logger, registry, schedule, files, persistent };
+    const server = buildMcpServer(
+      userClient === undefined ? baseDeps : { ...baseDeps, userClient, dmGuard }
+    );
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true

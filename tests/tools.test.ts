@@ -97,7 +97,8 @@ const appWith = (telegram: TelegramClient, overrides: AppOverrides = {}) => {
     registry: createPostRegistry(kv),
     schedule: createScheduleStore(kv),
     files: overrides.files ?? createFileStore(),
-    persistent: overrides.persistent ?? false
+    persistent: overrides.persistent ?? false,
+    kv
   });
 };
 
