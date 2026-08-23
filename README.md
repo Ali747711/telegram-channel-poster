@@ -9,12 +9,44 @@ It ships with a companion **Claude Code skill** ([`skills/telegram-post/SKILL.md
 | Tool | What it does |
 |---|---|
 | `post_to_channel` | Publish a text post (HTML by default). Splits >4096 chars into sequential posts, falls back to plain text if formatting fails to parse, returns message IDs + public link. |
-| `post_photo` | Publish a photo by public URL with an optional caption (≤1024 chars). |
-| `post_video` | Publish a video by public URL (MP4 recommended, ≤20MB) with an optional caption. |
+| `post_photo` / `post_video` | Publish media by public URL **or** by `file_id` from `POST /upload` (local files), with an optional caption (≤1024 chars). |
+| `post_document` | Publish any file (PDF, archive, …) by URL or `file_id`. |
+| `post_media_group` | Publish 2–10 photos/videos as one album (public URLs). |
+| `post_poll` | Publish a native poll or quiz (channels force anonymous voting). |
+| `schedule_post` / `list_scheduled_posts` / `cancel_scheduled_post` | Queue text posts for a future time (ISO 8601 with offset). Checked every ~30s; catch-up on wake; posts >24h overdue are dropped. Persistent only with Redis (below). |
 | `edit_post` | Replace a post's text by message ID; automatically edits the caption instead for photo/video posts. |
 | `delete_post` | Permanently delete a post by message ID. Gated behind `confirm: true`. |
-| `get_post` / `list_recent_posts` | Details of posts made through this server (content, link, edit/delete status). In-memory: history resets on server restart. |
+| `pin_post` / `unpin_post` | Pin/unpin a post (bot needs the "Edit Messages" admin right). |
+| `get_post` / `list_recent_posts` | Details of posts made through this server (content, link, edit/delete status). |
 | `get_channel_info` | Report channel title/ID/type and whether the bot has posting rights — use to debug the connection. |
+
+### Uploading local files
+
+`POST /upload` with the same bearer auth, the raw file bytes as the body, and an `X-Filename` header
+(≤20MB) returns a `file_id` valid for ~15 minutes:
+
+```bash
+curl -X POST https://<service>.onrender.com/upload \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H "X-Filename: photo.jpg" -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg
+```
+
+Pass the returned `file_id` to `post_photo`, `post_video`, or `post_document`.
+
+### Optional persistence (Upstash Redis)
+
+Without configuration, post history and the schedule queue live in memory and reset when the
+server restarts (the free Render tier sleeps after idle). To make them persistent, create a free
+Redis database at [upstash.com](https://upstash.com), then set two extra env vars on the service:
+
+```env
+UPSTASH_REDIS_REST_URL=https://<your-db>.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<rest-token>
+```
+
+No code changes needed — the server switches storage modes at startup (check the
+`storage initialized` log line).
 
 ## Prerequisites
 

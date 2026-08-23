@@ -14,12 +14,25 @@ Publish to the configured Telegram channel through the `telegram-poster` MCP ser
 | Tool | Use for |
 |---|---|
 | `mcp__telegram-poster__post_to_channel` | Text posts. Splits >4096 chars automatically. |
-| `mcp__telegram-poster__post_photo` | Photo by public http(s) URL, optional caption ≤1024 chars. |
-| `mcp__telegram-poster__post_video` | Video by public http(s) URL (MP4, ≤20MB), optional caption. |
+| `mcp__telegram-poster__post_photo` / `post_video` | Media by public URL, or by `file_id` for **local files** (see below). Caption ≤1024 chars. |
+| `mcp__telegram-poster__post_document` | Any file (PDF, archive…) by URL or `file_id`. |
+| `mcp__telegram-poster__post_media_group` | 2–10 photos/videos as one album (URLs only; caption on the first item). |
+| `mcp__telegram-poster__post_poll` | Native polls/quizzes. Channels force anonymous voting. |
+| `mcp__telegram-poster__schedule_post` / `list_scheduled_posts` / `cancel_scheduled_post` | Queue text posts for later. `publish_at` must be ISO 8601 WITH a timezone offset. Heed the persistence caveat in the tool's reply. |
 | `mcp__telegram-poster__edit_post` | Replace a post's text by message_id (auto-switches to caption edit for media posts). |
 | `mcp__telegram-poster__delete_post` | Permanently delete by message_id. Requires `confirm: true` — ONLY after the user explicitly asked to delete. |
-| `mcp__telegram-poster__get_post` / `list_recent_posts` | Look up posts made through the server (IDs, content, edit/delete status). Best-effort: history resets when the free-tier server restarts. |
+| `mcp__telegram-poster__pin_post` / `unpin_post` | Pin/unpin a post (bot needs the "Edit Messages" admin right). |
+| `mcp__telegram-poster__get_post` / `list_recent_posts` | Look up posts made through the server (IDs, content, edit/delete status). |
 | `mcp__telegram-poster__get_channel_info` | Diagnose connection and posting rights. |
+
+**Local files (images, videos, documents):** upload first, then post by `file_id` — never base64 through a tool call:
+
+```bash
+curl -s -X POST https://<your-service>/upload \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H "X-Filename: photo.jpg" --data-binary @photo.jpg
+# → {"file_id": "..."} — valid ~15 min; pass as file_id to post_photo/post_video/post_document
+```
 
 Tools missing? Check `claude mcp list` shows `telegram-poster`.
 
