@@ -158,6 +158,16 @@ describe('user-account tools', () => {
       expect(text).not.toContain('777000');
     });
 
+    it('asks the client to apply the unread filter (so the limit counts unread chats)', async () => {
+      const fake = fakeUserClient();
+
+      await callToolOn(appWith(fake.client), 'list_chats', { limit: 5, unread_only: true });
+
+      expect(fake.listDialogs).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 5, unreadOnly: true })
+      );
+    });
+
     it('can filter to unread chats only', async () => {
       const fake = fakeUserClient();
       fake.listDialogs.mockResolvedValue([

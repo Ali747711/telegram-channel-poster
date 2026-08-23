@@ -39,7 +39,11 @@ export interface ChatFolder {
  */
 export interface TelegramUserClient {
   readonly getMe: () => Promise<UserIdentity>;
-  readonly listDialogs: (params: { limit: number; folderId?: number }) => Promise<readonly UserChat[]>;
+  readonly listDialogs: (params: {
+    limit: number;
+    folderId?: number;
+    unreadOnly?: boolean;
+  }) => Promise<readonly UserChat[]>;
   readonly listFolders: () => Promise<readonly ChatFolder[]>;
   readonly readHistory: (params: { chat: string; limit: number }) => Promise<readonly UserMessage[]>;
   readonly searchMessages: (params: {
@@ -58,8 +62,8 @@ export interface UserClientOptions {
 }
 
 const CONNECTION_RETRIES = 3;
-/** How many recent dialogs to scan when resolving a folder's members. */
-const FOLDER_SCAN_LIMIT = 500;
+/** How many recent dialogs to scan when a filter (folder / unread) is applied. */
+const WIDE_SCAN_LIMIT = 500;
 
 const toIsoDate = (seconds: number | undefined): string =>
   new Date((seconds ?? 0) * 1000).toISOString();
@@ -160,20 +164,20 @@ export function createUserClient(options: UserClientOptions): TelegramUserClient
       };
     },
 
-    listDialogs: async ({ limit, folderId }): Promise<readonly UserChat[]> => {
+    listDialogs: async ({ limit, folderId, unreadOnly }): Promise<readonly UserChat[]> => {
       await ensureConnected();
       const allowedIds =
         folderId === undefined ? undefined : new Set(await folderPeerIds(client, folderId));
 
-      // getDialogs returns the most RECENT n dialogs. A folder's chats can be
-      // far down that list, so scan a wide window when filtering by folder and
-      // apply the caller's limit afterwards.
-      const dialogs = await client.getDialogs({
-        limit: allowedIds === undefined ? limit : FOLDER_SCAN_LIMIT
-      });
+      // getDialogs returns the most RECENT n dialogs, so any filtering must
+      // happen over a wide window — otherwise "5 unread chats" really means
+      // "unread ones among the 5 newest", which is not what callers expect.
+      const filtering = allowedIds !== undefined || unreadOnly === true;
+      const dialogs = await client.getDialogs({ limit: filtering ? WIDE_SCAN_LIMIT : limit });
 
       return dialogs
         .filter((dialog) => allowedIds === undefined || allowedIds.has(normalizePeerId(String(dialog.id))))
+        .filter((dialog) => unreadOnly !== true || (dialog.unreadCount ?? 0) > 0)
         .slice(0, limit)
         .map((dialog) => ({
           id: String(dialog.id),

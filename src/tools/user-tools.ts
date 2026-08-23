@@ -95,7 +95,13 @@ export function registerUserTools(server: McpServer, deps: UserToolDeps): void {
     },
     async ({ limit, folder_id, unread_only }) => {
       try {
-        const chats = await deps.userClient.listDialogs({ limit, folderId: folder_id });
+        const chats = await deps.userClient.listDialogs({
+          limit,
+          folderId: folder_id,
+          unreadOnly: unread_only
+        });
+        // The client already applies unread filtering over a wide window; this
+        // repeat is a cheap safety net for other implementations of the interface.
         const visible = chats
           .filter((chat) => !isServiceChat(chat.id))
           .filter((chat) => !unread_only || chat.unreadCount > 0);
