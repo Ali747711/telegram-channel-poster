@@ -2,12 +2,19 @@ import { z } from 'zod';
 
 import { LOG_LEVELS, type LogLevel } from './utils/logger.js';
 
+export interface UpstashConfig {
+  readonly url: string;
+  readonly token: string;
+}
+
 export interface Config {
   readonly botToken: string;
   readonly channelId: string;
   readonly mcpAuthToken: string;
   readonly port: number;
   readonly logLevel: LogLevel;
+  /** Present only when both UPSTASH_REDIS_REST_* vars are set — enables persistence. */
+  readonly upstash?: UpstashConfig;
 }
 
 /** "@channelusername" (5+ chars after @) or a numeric chat ID like "-1001234567890". */
@@ -24,7 +31,17 @@ const envSchema = z.object({
     .string({ required_error: 'required — generate with `openssl rand -hex 32`' })
     .min(32, 'must be at least 32 characters — generate with `openssl rand -hex 32`'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  LOG_LEVEL: z.enum(LOG_LEVELS).default('info')
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional()
+}).superRefine((env, ctx) => {
+  if ((env.UPSTASH_REDIS_REST_URL === undefined) !== (env.UPSTASH_REDIS_REST_TOKEN === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['UPSTASH_REDIS_REST_URL'],
+      message: 'UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set together (or neither)'
+    });
+  }
 });
 
 const formatIssues = (error: z.ZodError): string =>
@@ -42,11 +59,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid environment configuration:\n${formatIssues(parsed.error)}`);
   }
 
+  const upstash =
+    parsed.data.UPSTASH_REDIS_REST_URL !== undefined && parsed.data.UPSTASH_REDIS_REST_TOKEN !== undefined
+      ? Object.freeze({ url: parsed.data.UPSTASH_REDIS_REST_URL, token: parsed.data.UPSTASH_REDIS_REST_TOKEN })
+      : undefined;
+
   return Object.freeze({
     botToken: parsed.data.TELEGRAM_BOT_TOKEN,
     channelId: parsed.data.TELEGRAM_CHANNEL_ID,
     mcpAuthToken: parsed.data.MCP_AUTH_TOKEN,
     port: parsed.data.PORT,
-    logLevel: parsed.data.LOG_LEVEL
+    logLevel: parsed.data.LOG_LEVEL,
+    ...(upstash !== undefined ? { upstash } : {})
   });
 }

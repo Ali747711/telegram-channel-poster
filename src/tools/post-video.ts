@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { ToolDeps } from './deps.js';
 import { errorMessage, sendWithParseFallback, toParseMode, toolError, toolText } from './helpers.js';
+import { resolveMediaSource } from './media-source.js';
 
 const inputSchema = {
   video_url: z
@@ -11,9 +12,14 @@ const inputSchema = {
     .refine((url) => url.startsWith('https://') || url.startsWith('http://'), {
       message: 'video_url must be an http(s) URL'
     })
+    .optional()
     .describe(
       'Publicly reachable video URL (MP4 recommended, ≤20MB — Telegram downloads it server-side).'
     ),
+  file_id: z
+    .string()
+    .optional()
+    .describe('Alternative to video_url: id of a file uploaded via POST /upload (for local videos).'),
   caption: z
     .string()
     .min(1)
@@ -36,27 +42,33 @@ export function registerPostVideo(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Post a video to Telegram channel',
       description:
-        `Publish a video (by public URL, ≤20MB) with an optional caption to the configured ` +
-        `Telegram channel (${deps.channelId}). Returns the message ID and a public link.`,
+        `Publish a video with an optional caption to the configured Telegram channel ` +
+        `(${deps.channelId}) — by public URL (≤20MB), or by file_id from POST /upload for local videos. ` +
+        'Returns the message ID and a public link.',
       inputSchema
     },
-    async ({ video_url, caption, parse_mode, silent }) => {
+    async ({ video_url, file_id, caption, parse_mode, silent }) => {
+      const source = resolveMediaSource(deps, video_url, file_id);
+      if (source.error !== undefined) {
+        return toolError(source.error);
+      }
       try {
         const { sent, usedFallback } = await sendWithParseFallback(
           (parseMode) =>
             deps.telegram.sendVideo({
               chatId: deps.channelId,
-              videoUrl: video_url,
+              videoUrl: source.url,
+              videoFile: source.file,
               caption,
               parseMode,
               silent
             }),
           toParseMode(parse_mode)
         );
-        deps.registry.record({
+        await deps.registry.record({
           messageId: sent.messageId,
           kind: 'video',
-          content: caption ?? '(video)',
+          content: caption ?? source.file?.filename ?? '(video)',
           link: sent.link
         });
         deps.logger.info('post_video succeeded', { messageId: sent.messageId });

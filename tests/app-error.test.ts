@@ -2,6 +2,10 @@ import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
+import { createFileStore } from '../src/file-store.js';
+import { createPostRegistry } from '../src/post-registry.js';
+import { createScheduleStore } from '../src/schedule-store.js';
+import { createMemoryKv } from '../src/storage/kv.js';
 import type { TelegramClient } from '../src/telegram/client.js';
 import type { Logger } from '../src/utils/logger.js';
 
@@ -21,8 +25,20 @@ describe('buildApp /mcp error handling', () => {
     const logger: Logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: errorSpy };
 
     const telegram = { getChat: vi.fn() } as unknown as TelegramClient;
+    const kv = createMemoryKv();
 
-    const res = await request(buildApp({ mcpAuthToken: AUTH_TOKEN, logger, telegram, channelId: '@x' }))
+    const res = await request(
+      buildApp({
+        mcpAuthToken: AUTH_TOKEN,
+        logger,
+        telegram,
+        channelId: '@x',
+        registry: createPostRegistry(kv),
+        schedule: createScheduleStore(kv),
+        files: createFileStore(),
+        persistent: false
+      })
+    )
       .post('/mcp')
       .set({
         Authorization: `Bearer ${AUTH_TOKEN}`,

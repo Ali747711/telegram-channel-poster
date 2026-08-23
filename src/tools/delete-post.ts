@@ -33,7 +33,7 @@ export function registerDeletePost(server: McpServer, deps: ToolDeps): void {
 
       try {
         await deps.telegram.deleteMessage(deps.channelId, message_id);
-        deps.registry.markDeleted(message_id);
+        await deps.registry.markDeleted(message_id);
         deps.logger.info('delete_post succeeded', { messageId: message_id });
         return toolText(`Deleted message_id ${message_id} from ${deps.channelId}.`);
       } catch (error) {

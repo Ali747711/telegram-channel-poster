@@ -72,7 +72,7 @@ export function registerEditPost(server: McpServer, deps: ToolDeps): void {
           viaCaption = true;
         }
 
-        deps.registry.markEdited(message_id, text);
+        await deps.registry.markEdited(message_id, text);
         deps.logger.info('edit_post succeeded', { messageId: message_id, viaCaption });
         const link = sent.link !== undefined ? ` Link: ${sent.link}` : '';
         return toolText(

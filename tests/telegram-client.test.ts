@@ -24,11 +24,22 @@ interface Sent {
   body: Record<string, unknown>;
 }
 
+const parseBody = (body: unknown): Record<string, unknown> => {
+  if (body instanceof FormData) {
+    const parsed: Record<string, unknown> = {};
+    for (const [key, value] of body.entries()) {
+      parsed[key] = value;
+    }
+    return parsed;
+  }
+  return JSON.parse(String(body)) as Record<string, unknown>;
+};
+
 const buildClient = (responses: Response[] | Error) => {
   const calls: Sent[] = [];
   const fetchFn = vi.fn(async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     if (responses instanceof Error) throw responses;
-    calls.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    calls.push({ url: String(url), body: parseBody(init?.body) });
     const next = responses.shift();
     if (!next) throw new Error('test: no more stubbed responses');
     return next;
@@ -123,6 +134,135 @@ describe('createTelegramClient', () => {
 
       expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/getChat`);
       expect(info).toEqual({ id: -100999, title: 'My Channel', username: 'mychan', type: 'channel' });
+    });
+  });
+
+  describe('sendPhoto with a file buffer', () => {
+    it('sends multipart form data with the photo as a blob', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.sendPhoto({
+        chatId: '@mychan',
+        photoFile: { data: Buffer.from('fake-image-bytes'), filename: 'pic.jpg', contentType: 'image/jpeg' },
+        caption: 'from a local file'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`);
+      expect(calls[0]!.body.chat_id).toBe('@mychan');
+      expect(calls[0]!.body.caption).toBe('from a local file');
+      expect(calls[0]!.body.photo).toBeInstanceOf(Blob);
+      expect(result.messageId).toBe(42);
+    });
+
+    it('rejects when neither URL nor file is provided', async () => {
+      const { client } = buildClient([sentMessage('mychan')]);
+
+      await expect(client.sendPhoto({ chatId: '@mychan' })).rejects.toThrow(/photo_url|file/i);
+    });
+  });
+
+  describe('sendDocument', () => {
+    it('posts a document by URL', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      const result = await client.sendDocument({
+        chatId: '@mychan',
+        documentUrl: 'https://example.com/report.pdf',
+        caption: 'the report'
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        document: 'https://example.com/report.pdf',
+        caption: 'the report',
+        disable_notification: false
+      });
+      expect(result.messageId).toBe(42);
+    });
+  });
+
+  describe('sendMediaGroup', () => {
+    it('posts an album and returns every message reference', async () => {
+      const { client, calls } = buildClient([
+        okResult([
+          { message_id: 50, chat: { id: -100123, username: 'mychan' } },
+          { message_id: 51, chat: { id: -100123, username: 'mychan' } }
+        ])
+      ]);
+
+      const results = await client.sendMediaGroup({
+        chatId: '@mychan',
+        items: [
+          { type: 'photo', url: 'https://example.com/1.jpg', caption: 'album!', parseMode: 'HTML' },
+          { type: 'video', url: 'https://example.com/2.mp4' }
+        ]
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendMediaGroup`);
+      expect(calls[0]!.body.media).toEqual([
+        { type: 'photo', media: 'https://example.com/1.jpg', caption: 'album!', parse_mode: 'HTML' },
+        { type: 'video', media: 'https://example.com/2.mp4' }
+      ]);
+      expect(results.map((r) => r.messageId)).toEqual([50, 51]);
+      expect(results[0]!.link).toBe('https://t.me/mychan/50');
+    });
+  });
+
+  describe('sendPoll', () => {
+    it('posts an anonymous poll', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      await client.sendPoll({
+        chatId: '@mychan',
+        question: 'Next book?',
+        options: ['Deep Work', 'Atomic Habits']
+      });
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/sendPoll`);
+      expect(calls[0]!.body).toEqual({
+        chat_id: '@mychan',
+        question: 'Next book?',
+        options: [{ text: 'Deep Work' }, { text: 'Atomic Habits' }],
+        is_anonymous: true,
+        allows_multiple_answers: false,
+        disable_notification: false
+      });
+    });
+
+    it('posts a quiz with the correct option index', async () => {
+      const { client, calls } = buildClient([sentMessage('mychan')]);
+
+      await client.sendPoll({
+        chatId: '@mychan',
+        question: '2+2?',
+        options: ['3', '4'],
+        quizCorrectOptionIndex: 1
+      });
+
+      expect(calls[0]!.body.type).toBe('quiz');
+      expect(calls[0]!.body.correct_option_id).toBe(1);
+    });
+  });
+
+  describe('pin and unpin', () => {
+    it('pins quietly by default', async () => {
+      const { client, calls } = buildClient([okResult(true)]);
+
+      const result = await client.pinChatMessage('@mychan', 42);
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/pinChatMessage`);
+      expect(calls[0]!.body).toEqual({ chat_id: '@mychan', message_id: 42, disable_notification: true });
+      expect(result).toBe(true);
+    });
+
+    it('unpins by message id', async () => {
+      const { client, calls } = buildClient([okResult(true)]);
+
+      await client.unpinChatMessage('@mychan', 42);
+
+      expect(calls[0]!.url).toBe(`https://api.telegram.org/bot${BOT_TOKEN}/unpinChatMessage`);
+      expect(calls[0]!.body).toEqual({ chat_id: '@mychan', message_id: 42 });
     });
   });
 

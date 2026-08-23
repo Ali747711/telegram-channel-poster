@@ -72,6 +72,26 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...validEnv, PORT: '70000' })).toThrow(/PORT/);
   });
 
+  it('returns no upstash config when the variables are absent', () => {
+    expect(loadConfig(validEnv).upstash).toBeUndefined();
+  });
+
+  it('returns upstash config when both REST variables are set', () => {
+    const config = loadConfig({
+      ...validEnv,
+      UPSTASH_REDIS_REST_URL: 'https://x.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'tok'
+    });
+
+    expect(config.upstash).toEqual({ url: 'https://x.upstash.io', token: 'tok' });
+  });
+
+  it('rejects a lone upstash variable (must be both or neither)', () => {
+    expect(() => loadConfig({ ...validEnv, UPSTASH_REDIS_REST_URL: 'https://x.upstash.io' })).toThrow(
+      /UPSTASH/
+    );
+  });
+
   it('returns a frozen (immutable) config object', () => {
     const config = loadConfig(validEnv);
 

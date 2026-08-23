@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { ToolDeps } from './deps.js';
 import { errorMessage, sendWithParseFallback, toParseMode, toolError, toolText } from './helpers.js';
+import { resolveMediaSource } from './media-source.js';
 
 const inputSchema = {
   photo_url: z
@@ -11,10 +12,14 @@ const inputSchema = {
     .refine((url) => url.startsWith('https://') || url.startsWith('http://'), {
       message: 'photo_url must be an http(s) URL'
     })
+    .optional()
     .describe(
-      'Publicly reachable image URL (JPEG/PNG/GIF/WebP, up to ~5MB). ' +
-        'Telegram downloads it server-side; data: URIs and local paths do not work.'
+      'Publicly reachable image URL (JPEG/PNG/GIF/WebP, up to ~5MB — Telegram fetches it server-side).'
     ),
+  file_id: z
+    .string()
+    .optional()
+    .describe('Alternative to photo_url: id of a file uploaded via POST /upload (for local images).'),
   caption: z
     .string()
     .min(1)
@@ -37,27 +42,33 @@ export function registerPostPhoto(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Post a photo to Telegram channel',
       description:
-        `Publish a photo (by public URL) with an optional caption to the configured ` +
-        `Telegram channel (${deps.channelId}). Returns the message ID and a public link.`,
+        `Publish a photo with an optional caption to the configured Telegram channel ` +
+        `(${deps.channelId}) — by public URL, or by file_id from POST /upload for local images. ` +
+        'Returns the message ID and a public link.',
       inputSchema
     },
-    async ({ photo_url, caption, parse_mode, silent }) => {
+    async ({ photo_url, file_id, caption, parse_mode, silent }) => {
+      const source = resolveMediaSource(deps, photo_url, file_id);
+      if (source.error !== undefined) {
+        return toolError(source.error);
+      }
       try {
         const { sent, usedFallback } = await sendWithParseFallback(
           (parseMode) =>
             deps.telegram.sendPhoto({
               chatId: deps.channelId,
-              photoUrl: photo_url,
+              photoUrl: source.url,
+              photoFile: source.file,
               caption,
               parseMode,
               silent
             }),
           toParseMode(parse_mode)
         );
-        deps.registry.record({
+        await deps.registry.record({
           messageId: sent.messageId,
           kind: 'photo',
-          content: caption ?? '(photo)',
+          content: caption ?? source.file?.filename ?? '(photo)',
           link: sent.link
         });
         deps.logger.info('post_photo succeeded', { messageId: sent.messageId });

@@ -39,7 +39,7 @@ export function registerGetPost(server: McpServer, deps: ToolDeps): void {
       }
     },
     async ({ message_id }) => {
-      const post = deps.registry.get(message_id);
+      const post = await deps.registry.get(message_id);
       if (post === undefined) {
         return toolText(`No record of message_id ${message_id}. ${RESTART_CAVEAT}`);
       }
@@ -61,7 +61,7 @@ export function registerListRecentPosts(server: McpServer, deps: ToolDeps): void
       }
     },
     async ({ limit }) => {
-      const posts = deps.registry.list(limit);
+      const posts = await deps.registry.list(limit);
       if (posts.length === 0) {
         return toolText(`No posts tracked yet. ${RESTART_CAVEAT}`);
       }

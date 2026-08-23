@@ -1,10 +1,14 @@
+import { basename } from 'node:path';
+
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express, { type Express, type Request, type Response } from 'express';
 
 import { requireBearerAuth } from './auth.js';
-import { createPostRegistry } from './post-registry.js';
+import type { FileStore } from './file-store.js';
+import type { PostRegistry } from './post-registry.js';
 import { rateLimit } from './rate-limit.js';
 import { requestLogger } from './request-logger.js';
+import type { ScheduleStore } from './schedule-store.js';
 import { buildMcpServer } from './server.js';
 import type { TelegramClient } from './telegram/client.js';
 import type { Logger } from './utils/logger.js';
@@ -14,9 +18,14 @@ export interface AppDeps {
   readonly logger: Logger;
   readonly telegram: TelegramClient;
   readonly channelId: string;
+  readonly registry: PostRegistry;
+  readonly schedule: ScheduleStore;
+  readonly files: FileStore;
+  readonly persistent: boolean;
 }
 
 const JSON_BODY_LIMIT = '1mb';
+const UPLOAD_BODY_LIMIT = '21mb';
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 30;
 
@@ -28,12 +37,18 @@ const methodNotAllowed = (_req: Request, res: Response): void => {
   });
 };
 
+const safeFilename = (header: unknown): string => {
+  const raw = typeof header === 'string' && header.length > 0 ? header : 'upload.bin';
+  return basename(raw).slice(0, 200);
+};
+
 /**
- * HTTP app: open /healthz for Render health checks, bearer-gated /mcp for Claude.
- * /mcp runs the Streamable HTTP transport in stateless mode — a fresh
- * McpServer + transport per request, no sessions, plain JSON responses.
+ * HTTP app: open /healthz for Render health checks; bearer-gated /mcp (MCP over
+ * stateless Streamable HTTP) and /upload (raw-body file uploads that media
+ * tools can reference by file_id).
  */
-export function buildApp({ mcpAuthToken, logger, telegram, channelId }: AppDeps): Express {
+export function buildApp(deps: AppDeps): Express {
+  const { mcpAuthToken, logger, telegram, channelId, registry, schedule, files, persistent } = deps;
   const app = express();
   app.disable('x-powered-by');
   // Render terminates TLS at its proxy; trust the first hop so req.ip is the real client.
@@ -45,14 +60,10 @@ export function buildApp({ mcpAuthToken, logger, telegram, channelId }: AppDeps)
 
   const auth = requireBearerAuth(mcpAuthToken);
   const limiter = rateLimit({ windowMs: RATE_LIMIT_WINDOW_MS, max: RATE_LIMIT_MAX_REQUESTS });
-  app.use('/mcp', requestLogger(logger), limiter);
-
-  // Shared across requests: the MCP server is per-request (stateless transport),
-  // but posted-message history must survive between calls.
-  const registry = createPostRegistry();
+  app.use(['/mcp', '/upload'], requestLogger(logger), limiter);
 
   app.post('/mcp', auth, express.json({ limit: JSON_BODY_LIMIT }), async (req, res) => {
-    const server = buildMcpServer({ telegram, channelId, logger, registry });
+    const server = buildMcpServer({ telegram, channelId, logger, registry, schedule, files, persistent });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true
@@ -82,6 +93,32 @@ export function buildApp({ mcpAuthToken, logger, telegram, channelId }: AppDeps)
           id: null
         });
       }
+    }
+  });
+
+  // Raw-body upload: body = the file bytes, X-Filename header names it.
+  // Returns a short-lived file_id the media tools accept instead of a URL.
+  app.post('/upload', auth, express.raw({ type: () => true, limit: UPLOAD_BODY_LIMIT }), (req, res) => {
+    const data = req.body as Buffer;
+    if (!Buffer.isBuffer(data) || data.byteLength === 0) {
+      res.status(400).json({ error: 'empty body — send the raw file bytes as the request body' });
+      return;
+    }
+    try {
+      const fileId = files.put({
+        data,
+        filename: safeFilename(req.get('x-filename')),
+        contentType: req.get('content-type') ?? 'application/octet-stream'
+      });
+      logger.info('file uploaded', { fileId, bytes: data.byteLength });
+      res.status(200).json({
+        file_id: fileId,
+        bytes: data.byteLength,
+        expires_in_minutes: Math.round(files.ttlMs / 60_000),
+        usage: 'pass as file_id to post_photo / post_video / post_document'
+      });
+    } catch (error) {
+      res.status(413).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

@@ -5,6 +5,13 @@ const MAX_RETRY_AFTER_S = 30;
 
 export type ParseMode = 'HTML' | 'MarkdownV2';
 
+/** A file held in memory (from the /upload endpoint) to send as multipart. */
+export interface FilePayload {
+  readonly data: Buffer | Uint8Array;
+  readonly filename: string;
+  readonly contentType?: string;
+}
+
 export interface SendMessageParams {
   readonly chatId: string | number;
   readonly text: string;
@@ -15,9 +22,41 @@ export interface SendMessageParams {
 
 export interface SendPhotoParams {
   readonly chatId: string | number;
-  readonly photoUrl: string;
+  readonly photoUrl?: string;
+  readonly photoFile?: FilePayload;
   readonly caption?: string;
   readonly parseMode?: ParseMode;
+  readonly silent?: boolean;
+}
+
+export interface SendDocumentParams {
+  readonly chatId: string | number;
+  readonly documentUrl?: string;
+  readonly documentFile?: FilePayload;
+  readonly caption?: string;
+  readonly parseMode?: ParseMode;
+  readonly silent?: boolean;
+}
+
+export interface MediaGroupItem {
+  readonly type: 'photo' | 'video';
+  readonly url: string;
+  readonly caption?: string;
+  readonly parseMode?: ParseMode;
+}
+
+export interface SendMediaGroupParams {
+  readonly chatId: string | number;
+  readonly items: readonly MediaGroupItem[];
+  readonly silent?: boolean;
+}
+
+export interface SendPollParams {
+  readonly chatId: string | number;
+  readonly question: string;
+  readonly options: readonly string[];
+  readonly allowsMultipleAnswers?: boolean;
+  readonly quizCorrectOptionIndex?: number;
   readonly silent?: boolean;
 }
 
@@ -50,7 +89,8 @@ export interface EditCaptionParams {
 
 export interface SendVideoParams {
   readonly chatId: string | number;
-  readonly videoUrl: string;
+  readonly videoUrl?: string;
+  readonly videoFile?: FilePayload;
   readonly caption?: string;
   readonly parseMode?: ParseMode;
   readonly silent?: boolean;
@@ -76,6 +116,11 @@ export interface TelegramClient {
   readonly editMessageCaption: (params: EditCaptionParams) => Promise<SentMessage>;
   readonly deleteMessage: (chatId: string | number, messageId: number) => Promise<boolean>;
   readonly sendVideo: (params: SendVideoParams) => Promise<SentMessage>;
+  readonly sendDocument: (params: SendDocumentParams) => Promise<SentMessage>;
+  readonly sendMediaGroup: (params: SendMediaGroupParams) => Promise<readonly SentMessage[]>;
+  readonly sendPoll: (params: SendPollParams) => Promise<SentMessage>;
+  readonly pinChatMessage: (chatId: string | number, messageId: number, silent?: boolean) => Promise<boolean>;
+  readonly unpinChatMessage: (chatId: string | number, messageId: number) => Promise<boolean>;
 }
 
 export interface TelegramClientOptions {
@@ -148,6 +193,26 @@ const toApiError = (method: string, envelope: ApiEnvelope, sanitize: (s: string)
   );
 };
 
+/** Routes a media send through JSON (URL) or multipart (in-memory file). */
+const callWithMedia = (
+  call: ApiCall,
+  method: string,
+  field: string,
+  url: string | undefined,
+  file: FilePayload | undefined,
+  payload: Record<string, unknown>
+): Promise<unknown> => {
+  if (file !== undefined) {
+    return call(method, payload, { field, file });
+  }
+  if (url !== undefined) {
+    return call(method, { ...payload, [field]: url });
+  }
+  throw new TelegramApiError(
+    `${method} needs either a public ${field}_url or an uploaded file (via /upload).`
+  );
+};
+
 const toSentMessage = (raw: RawMessage): SentMessage => ({
   messageId: raw.message_id,
   ...(raw.chat.username !== undefined
@@ -155,7 +220,12 @@ const toSentMessage = (raw: RawMessage): SentMessage => ({
     : {})
 });
 
-type ApiCall = (method: string, payload: Record<string, unknown>) => Promise<unknown>;
+interface FilePart {
+  readonly field: string;
+  readonly file: FilePayload;
+}
+
+type ApiCall = (method: string, payload: Record<string, unknown>, filePart?: FilePart) => Promise<unknown>;
 
 interface RequestContext {
   readonly botToken: string;
@@ -163,17 +233,34 @@ interface RequestContext {
   readonly sanitize: (text: string) => string;
 }
 
+/** Multipart body for file uploads: scalar fields as strings, file as a Blob. */
+const buildFormData = (payload: Record<string, unknown>, filePart: FilePart): FormData => {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined) {
+      form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    }
+  }
+  const { data, filename, contentType } = filePart.file;
+  const bytes = data instanceof Uint8Array ? new Uint8Array(data) : data;
+  form.append(filePart.field, new Blob([bytes], { type: contentType ?? 'application/octet-stream' }), filename);
+  return form;
+};
+
 const performRequest = async (
   ctx: RequestContext,
   method: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  filePart?: FilePart
 ): Promise<unknown> => {
   let response: Response;
   try {
     response = await ctx.fetchFn(`${API_BASE}/bot${ctx.botToken}/${method}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      // With FormData, fetch sets the multipart content-type + boundary itself.
+      ...(filePart === undefined
+        ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }
+        : { body: buildFormData(payload, filePart) }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
   } catch (error) {
@@ -200,10 +287,11 @@ const callWithOneRetry = async (
   runOnce: ApiCall,
   sleepFn: (ms: number) => Promise<void>,
   method: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  filePart?: FilePart
 ): Promise<unknown> => {
   try {
-    return await runOnce(method, payload);
+    return await runOnce(method, payload, filePart);
   } catch (error) {
     if (!(error instanceof TelegramApiError) || error.errorCode !== 429) {
       throw error;
@@ -217,7 +305,7 @@ const callWithOneRetry = async (
     }
     await sleepFn(retryAfter * 1000);
     try {
-      return await runOnce(method, payload);
+      return await runOnce(method, payload, filePart);
     } catch (secondError) {
       if (secondError instanceof TelegramApiError && secondError.errorCode === 429) {
         throw new TelegramApiError(
@@ -238,9 +326,10 @@ const callWithOneRetry = async (
 export function createTelegramClient(options: TelegramClientOptions): TelegramClient {
   const { botToken, fetchFn = fetch, sleepFn = defaultSleep } = options;
   const sanitize = (text: string): string => text.split(botToken).join('[bot-token]');
-  const runOnce: ApiCall = (method, payload) =>
-    performRequest({ botToken, fetchFn, sanitize }, method, payload);
-  const call: ApiCall = (method, payload) => callWithOneRetry(runOnce, sleepFn, method, payload);
+  const runOnce: ApiCall = (method, payload, filePart) =>
+    performRequest({ botToken, fetchFn, sanitize }, method, payload, filePart);
+  const call: ApiCall = (method, payload, filePart) =>
+    callWithOneRetry(runOnce, sleepFn, method, payload, filePart);
 
   return Object.freeze({
     sendMessage: async (params: SendMessageParams): Promise<SentMessage> => {
@@ -255,14 +344,77 @@ export function createTelegramClient(options: TelegramClientOptions): TelegramCl
     },
 
     sendPhoto: async (params: SendPhotoParams): Promise<SentMessage> => {
-      const raw = (await call('sendPhoto', {
+      const raw = (await callWithMedia(call, 'sendPhoto', 'photo', params.photoUrl, params.photoFile, {
         chat_id: params.chatId,
-        photo: params.photoUrl,
         ...(params.caption !== undefined ? { caption: params.caption } : {}),
         ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {}),
         disable_notification: params.silent ?? false
       })) as RawMessage;
       return toSentMessage(raw);
+    },
+
+    sendDocument: async (params: SendDocumentParams): Promise<SentMessage> => {
+      const raw = (await callWithMedia(
+        call,
+        'sendDocument',
+        'document',
+        params.documentUrl,
+        params.documentFile,
+        {
+          chat_id: params.chatId,
+          ...(params.caption !== undefined ? { caption: params.caption } : {}),
+          ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {}),
+          disable_notification: params.silent ?? false
+        }
+      )) as RawMessage;
+      return toSentMessage(raw);
+    },
+
+    sendMediaGroup: async (params: SendMediaGroupParams): Promise<readonly SentMessage[]> => {
+      const raws = (await call('sendMediaGroup', {
+        chat_id: params.chatId,
+        media: params.items.map((item) => ({
+          type: item.type,
+          media: item.url,
+          ...(item.caption !== undefined ? { caption: item.caption } : {}),
+          ...(item.parseMode !== undefined ? { parse_mode: item.parseMode } : {})
+        })),
+        disable_notification: params.silent ?? false
+      })) as RawMessage[];
+      return raws.map(toSentMessage);
+    },
+
+    sendPoll: async (params: SendPollParams): Promise<SentMessage> => {
+      const raw = (await call('sendPoll', {
+        chat_id: params.chatId,
+        question: params.question,
+        options: params.options.map((text) => ({ text })),
+        is_anonymous: true, // channels only allow anonymous polls
+        allows_multiple_answers: params.allowsMultipleAnswers ?? false,
+        ...(params.quizCorrectOptionIndex !== undefined
+          ? { type: 'quiz', correct_option_id: params.quizCorrectOptionIndex }
+          : {}),
+        disable_notification: params.silent ?? false
+      })) as RawMessage;
+      return toSentMessage(raw);
+    },
+
+    pinChatMessage: async (
+      chatId: string | number,
+      messageId: number,
+      silent = true
+    ): Promise<boolean> => {
+      return (
+        (await call('pinChatMessage', {
+          chat_id: chatId,
+          message_id: messageId,
+          disable_notification: silent
+        })) === true
+      );
+    },
+
+    unpinChatMessage: async (chatId: string | number, messageId: number): Promise<boolean> => {
+      return (await call('unpinChatMessage', { chat_id: chatId, message_id: messageId })) === true;
     },
 
     getChat: async (chatId: string | number): Promise<ChatInfo> => {
@@ -306,9 +458,8 @@ export function createTelegramClient(options: TelegramClientOptions): TelegramCl
     },
 
     sendVideo: async (params: SendVideoParams): Promise<SentMessage> => {
-      const raw = (await call('sendVideo', {
+      const raw = (await callWithMedia(call, 'sendVideo', 'video', params.videoUrl, params.videoFile, {
         chat_id: params.chatId,
-        video: params.videoUrl,
         ...(params.caption !== undefined ? { caption: params.caption } : {}),
         ...(params.parseMode !== undefined ? { parse_mode: params.parseMode } : {}),
         disable_notification: params.silent ?? false,

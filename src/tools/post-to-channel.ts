@@ -77,7 +77,7 @@ export function registerPostToChannel(server: McpServer, deps: ToolDeps): void {
             activeParseMode
           );
           posted.push(sent);
-          deps.registry.record({
+          await deps.registry.record({
             messageId: sent.messageId,
             kind: 'text',
             content: chunk,

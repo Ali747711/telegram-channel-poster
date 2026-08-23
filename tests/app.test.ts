@@ -2,6 +2,10 @@ import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
+import { createFileStore } from '../src/file-store.js';
+import { createPostRegistry } from '../src/post-registry.js';
+import { createScheduleStore } from '../src/schedule-store.js';
+import { createMemoryKv } from '../src/storage/kv.js';
 import type { TelegramClient } from '../src/telegram/client.js';
 import { createLogger } from '../src/utils/logger.js';
 
@@ -16,13 +20,19 @@ const stubTelegram = (): TelegramClient =>
     getChatMember: vi.fn()
   }) as unknown as TelegramClient;
 
-const app = () =>
-  buildApp({
+const app = () => {
+  const kv = createMemoryKv();
+  return buildApp({
     mcpAuthToken: AUTH_TOKEN,
     logger: createLogger('error'),
     telegram: stubTelegram(),
-    channelId: '@testchannel'
+    channelId: '@testchannel',
+    registry: createPostRegistry(kv),
+    schedule: createScheduleStore(kv),
+    files: createFileStore(),
+    persistent: false
   });
+};
 
 const MCP_HEADERS = {
   Authorization: `Bearer ${AUTH_TOKEN}`,
@@ -115,7 +125,39 @@ describe('buildApp', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(2);
-      expect(res.body.result.tools).toHaveLength(8);
+      expect(res.body.result.tools).toHaveLength(16);
+    });
+
+    describe('/upload', () => {
+      it('rejects uploads without the token', async () => {
+        const res = await request(app()).post('/upload').send(Buffer.from('data'));
+
+        expect(res.status).toBe(401);
+      });
+
+      it('stores an uploaded file and returns a usable file_id', async () => {
+        const res = await request(app())
+          .post('/upload')
+          .set('Authorization', `Bearer ${AUTH_TOKEN}`)
+          .set('X-Filename', 'photo.jpg')
+          .set('Content-Type', 'image/jpeg')
+          .send(Buffer.from('raw-image-bytes'));
+
+        expect(res.status).toBe(200);
+        expect(res.body.file_id).toMatch(/[0-9a-f-]{36}/);
+        expect(res.body.bytes).toBe(15);
+        expect(res.body.expires_in_minutes).toBeGreaterThan(0);
+      });
+
+      it('rejects an empty body', async () => {
+        const res = await request(app())
+          .post('/upload')
+          .set('Authorization', `Bearer ${AUTH_TOKEN}`)
+          .set('Content-Type', 'application/octet-stream')
+          .send();
+
+        expect(res.status).toBe(400);
+      });
     });
 
     it('rate-limits /mcp after 30 requests in a minute', async () => {
