@@ -34,6 +34,29 @@ curl -X POST https://<service>.onrender.com/upload \
 
 Pass the returned `file_id` to `post_photo`, `post_video`, or `post_document`.
 
+### Optional: personal-account tools (MTProto)
+
+By default the server acts only as a **bot** — it can post to your channel and nothing else. Bots
+cannot read your private chats, see channels you've joined, or DM people who haven't messaged them
+first. To do those things the server must act as **your user account**:
+
+1. Get `api_id` / `api_hash` from [my.telegram.org](https://my.telegram.org) → API development tools,
+   and put them in `.env` as `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`.
+2. Run `npm run login:telegram` — it texts you a code, you enter it in your terminal, and it writes
+   `TELEGRAM_SESSION` to `.env`.
+3. Copy all three values into your Render environment to enable them in production.
+
+This adds seven tools: `whoami`, `list_chats`, `list_folders`, `read_chat_history`,
+`pull_channel_posts`, `search_messages`, and `send_dm`. Without the session they are not registered
+at all.
+
+> **Understand the tradeoff.** The session string *is* your Telegram account — anyone holding it can
+> read your messages and send as you. Keep it out of git (it is gitignored), treat it like a password,
+> and revoke it anytime via Telegram → Settings → Devices. Built-in guardrails: `send_dm` requires
+> `confirm: true` and is capped at 20 sends/day (automated DMing is what triggers Telegram's
+> anti-spam limits), the Telegram service chat is never read from or written to, and login/2FA codes
+> are redacted from all returned text.
+
 ### Optional persistence (Upstash Redis)
 
 Without configuration, post history and the schedule queue live in memory and reset when the

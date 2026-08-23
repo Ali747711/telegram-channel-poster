@@ -36,6 +36,26 @@ curl -s -X POST https://<your-service>/upload \
 
 Tools missing? Check `claude mcp list` shows `telegram-poster`.
 
+## Personal-account tools (optional)
+
+Present only when the server is configured with a Telegram **user session** (see the repo README).
+They act as the account owner rather than the bot, so their output is private data.
+
+| Tool | Use for |
+|---|---|
+| `mcp__telegram-poster__whoami` | Confirm which account the session belongs to. |
+| `mcp__telegram-poster__list_chats` / `list_folders` | The owner's dialogs (with `folder_id` / `unread_only` filters) and chat folders. |
+| `mcp__telegram-poster__read_chat_history` | Messages from one of the owner's chats. |
+| `mcp__telegram-poster__pull_channel_posts` | Recent posts from any channel the owner has joined — catch-up and research. |
+| `mcp__telegram-poster__search_messages` | Full-text search across the owner's messages. |
+| `mcp__telegram-poster__send_dm` | Sends **as the owner** to a person. See rules below. |
+
+**Rules for these tools:**
+
+- **`send_dm` messages real people as the owner.** Always show the exact recipient AND wording, get explicit approval, then send with `confirm: true`. Never batch or improvise recipients. The server caps sends per day.
+- **Don't republish private chat content** to channels or other public surfaces unless asked.
+- The Telegram service chat is hard-blocked server-side and login/2FA codes are redacted automatically — don't route around either.
+
 ## Workflow
 
 1. **Always draft first, show it in chat, and wait for explicit approval — no exceptions.** This holds even when the request says "post it", "publish", or "send it to the channel"; treat that as authorisation to prepare the post, not to send it. Show the exact text (and photo/video URL) you intend to publish, then wait for a go-ahead. Never publish a revision without being asked to.
